@@ -89,7 +89,7 @@ The example in the previous section maps the `i` key to the
 
 Some [commands][6] take arguments. For example `cursorMove` which allows you
 to specify which direction and how much cursor moves. These commands can be
-executed by defining an object with prefined properties:
+executed by defining an object with predefined properties:
 ```js
 "<key>":  {
     "command": "<command>",
