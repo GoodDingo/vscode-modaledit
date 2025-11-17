@@ -289,6 +289,18 @@
 			{
 				"command": "modaledit.importPresets",
 				"title": "ModalEdit: Import preset keybindings"
+			},
+			{
+				"command": "modaledit.getMode",
+				"title": "ModalEdit: Get Current Mode"
+			},
+			{
+				"command": "modaledit.subscribeToModeChanges",
+				"title": "ModalEdit: Subscribe to Mode Changes"
+			},
+			{
+				"command": "modaledit.unsubscribeFromModeChanges",
+				"title": "ModalEdit: Unsubscribe from Mode Changes"
 			}
 		],
 		"keybindings": [

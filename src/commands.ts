@@ -296,7 +296,25 @@ export function register(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(typeNormalKeysId, typeNormalKeys),
         vscode.commands.registerCommand(selectBetweenId, selectBetween),
         vscode.commands.registerCommand(repeatLastChangeId, repeatLastChange),
-        vscode.commands.registerCommand(importPresetsId, importPresets)
+        vscode.commands.registerCommand(importPresetsId, importPresets),
+
+        // Cross-plugin communication API
+        vscode.commands.registerCommand("modaledit.getMode",
+            () => getCurrentMode()),
+
+        vscode.commands.registerCommand("modaledit.subscribeToModeChanges",
+            (commandName: string) => {
+                if (typeof commandName === 'string' && commandName.length > 0) {
+                    modeChangeSubscribers.add(commandName)
+                    return true
+                }
+                return false
+            }),
+
+        vscode.commands.registerCommand("modaledit.unsubscribeFromModeChanges",
+            (commandName: string) => {
+                return modeChangeSubscribers.delete(commandName)
+            })
     )
     mainStatusBar = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Left)
