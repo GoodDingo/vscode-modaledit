@@ -179,6 +179,63 @@ let currentKeySequence: string[] = []
 let lastKeySequence: string[] = []
 let lastChange: string[] = []
 /**
+ * Extension context for cross-plugin communication via globalState.
+ */
+let extensionContext: vscode.ExtensionContext
+/**
+ * Mode change subscriber registry for event notifications.
+ * Contains command names to invoke when mode changes.
+ */
+let modeChangeSubscribers: Set<string> = new Set()
+/**
+ * Cache of last known mode to detect changes.
+ * Initialized to 'normal' to match default normalMode = true.
+ */
+let currentModeCache: string = 'normal'
+/**
+ * Single source of truth for current mode computation.
+ * Derives mode from existing state variables without side effects.
+ *
+ * Priority order (highest to lowest):
+ * 1. SEARCH - Temporary overlay mode
+ * 2. VISUAL - Selection active in normal mode
+ * 3. NORMAL - Default modal editing mode
+ * 4. INSERT - Standard VS Code editing mode
+ *
+ * @returns Current mode as one of: 'normal', 'insert', 'visual', 'search'
+ */
+function getCurrentMode(): 'normal' | 'insert' | 'visual' | 'search' {
+    if (searching) return 'search'
+    if (normalMode && isSelecting()) return 'visual'
+    if (normalMode) return 'normal'
+    return 'insert'
+}
+/**
+ * Notify all registered subscribers when mode changes.
+ * Updates globalState for cross-plugin communication and broadcasts to dependent extensions.
+ *
+ * Defensive design:
+ * - Subscriber errors are caught and ignored (fail silently)
+ * - GlobalState updates happen first (before subscriber notifications)
+ * - No assumptions about subscriber implementation
+ *
+ * @param newMode The new mode to broadcast
+ */
+async function notifyModeChange(newMode: string): Promise<void> {
+    // Update globalState for cross-plugin communication
+    await extensionContext.globalState.update('modaledit.mode', newMode)
+
+    // Notify all subscribers (fire-and-forget, defensive)
+    for (const commandName of modeChangeSubscribers) {
+        try {
+            await vscode.commands.executeCommand(commandName, newMode)
+        } catch {
+            // Subscriber may have unloaded, thrown error, or not exist
+            // Don't let subscriber errors crash ModalEdit
+        }
+    }
+}
+/**
  * ## Command Names
  *
  * Since command names are easy to misspell, we define them as constants.
@@ -212,6 +269,9 @@ const importPresetsId = "modaledit.importPresets"
  * calls this function). We also create the status bar item.
  */
 export function register(context: vscode.ExtensionContext) {
+    // Store context for cross-plugin communication via globalState
+    extensionContext = context
+
     context.subscriptions.push(
         vscode.commands.registerCommand(toggleId, toggle),
         vscode.commands.registerCommand(enterNormalId, enterNormal),
@@ -395,6 +455,16 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
     else {
         mainStatusBar.hide()
         secondaryStatusBar.hide()
+    }
+
+    // Detect mode changes and notify subscribers
+    const newMode = getCurrentMode()
+    if (newMode !== currentModeCache) {
+        currentModeCache = newMode
+        // Fire-and-forget notification (don't await to avoid blocking UI updates)
+        notifyModeChange(newMode).catch(() => {
+            // Notification errors shouldn't crash status bar updates
+        })
     }
 }
 /**
