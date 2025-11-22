@@ -301,6 +301,10 @@
 			{
 				"command": "modaledit.unsubscribeFromModeChanges",
 				"title": "ModalEdit: Unsubscribe from Mode Changes"
+			},
+			{
+				"command": "modaledit.debugModeState",
+				"title": "ModalEdit: Debug Mode State (Diagnostics)"
 			}
 		],
 		"keybindings": [
