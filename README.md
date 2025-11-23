@@ -584,11 +584,11 @@ string. In addition to these parameters, the command has four flags:
   missing or false the search is case-insensitive.
 - By default the search scope is the current line. If you want search inside
   the whole document, set the `docScope` flag.
-- The `nested` makes sure that `from` and `to` are balanced. I.e. if there are 
-  nested `from` → `to` blocks, the command selects the block where the cursor 
+- The `nested` makes sure that `from` and `to` are balanced. I.e. if there are
+  nested `from` → `to` blocks, the command selects the block where the cursor
   currently resides. Deeper level blocks will be included in the selection.
 
-Below is an example that selects all text inside matching parentheses. For more 
+Below is an example that selects all text inside matching parentheses. For more
 advanced examples check the [tutorial][9].
 ```js
 {
@@ -600,6 +600,34 @@ advanced examples check the [tutorial][9].
     }
 }
 ```
+
+#### Multi-Cursor Support
+
+The `modaledit.selectBetween` command fully supports multiple cursors. When
+multiple cursors are active, the command processes each cursor independently:
+
+- Each cursor searches within its own line scope (when `docScope` is `false` or
+  omitted).
+- All cursors remain active after the command executes.
+- Each selection is computed independently based on its cursor position.
+
+For example, with multiple cursors on different lines, the following command
+will select the word at each cursor position:
+```js
+{
+    "command": "modaledit.selectBetween",
+    "args": {
+        "from": "\\W",
+        "to": "\\W",
+        "regex": true
+    }
+}
+```
+
+**Note:** When `docScope` is set to `true`, the command falls back to
+single-cursor mode and searches the entire document. In this case, only the
+primary cursor's selection is processed, and other cursors are removed. This
+behavior ensures that document-wide searches operate predictably.
 
 ### Repeat Last Change
 

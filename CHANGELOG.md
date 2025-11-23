@@ -2,6 +2,17 @@
 
 All notable changes to the ModalEdit extension will be documented in this file.
 
+## Version 2.2.1
+
+### Bug Fixes
+
+- Fixed `modaledit.selectBetween` command to properly support multiple cursors.
+  Previously, when multiple cursors were active, the command would only process
+  the primary cursor and discard all other cursors. Now each cursor is processed
+  independently within its own line scope, and all cursors remain active after
+  the command executes. When `docScope` is set to `true`, the command falls back
+  to single-cursor mode for document-wide searches.
+
 ## Version 1.0
 
 - Initial release
