@@ -587,6 +587,10 @@ string. In addition to these parameters, the command has four flags:
 - The `nested` makes sure that `from` and `to` are balanced. I.e. if there are
   nested `from` → `to` blocks, the command selects the block where the cursor
   currently resides. Deeper level blocks will be included in the selection.
+- The `unicode` flag enables full Unicode support in regular expressions,
+  including Unicode property escapes like `\p{L}` (letters), `\p{Emoji}`, etc.
+  This is useful for matching non-ASCII characters and emoji correctly. When
+  this flag is missing or false, standard JavaScript regex matching is used.
 
 Below is an example that selects all text inside matching parentheses. For more
 advanced examples check the [tutorial][9].
@@ -628,6 +632,38 @@ will select the word at each cursor position:
 single-cursor mode and searches the entire document. In this case, only the
 primary cursor's selection is processed, and other cursors are removed. This
 behavior ensures that document-wide searches operate predictably.
+
+#### Unicode Support
+
+The `unicode` flag enables full Unicode regex support, allowing you to match
+characters beyond ASCII and use Unicode property escapes. This is particularly
+useful for internationalized text and emoji.
+
+Example using Unicode property escapes to select a word (any sequence of Unicode
+letters):
+```js
+{
+    "command": "modaledit.selectBetween",
+    "args": {
+        "from": "\\P{L}",
+        "to": "\\P{L}",
+        "regex": true,
+        "unicode": true
+    }
+}
+```
+
+Example selecting text between Unicode quotation marks:
+```js
+{
+    "command": "modaledit.selectBetween",
+    "args": {
+        "from": """,
+        "to": """,
+        "unicode": true
+    }
+}
+```
 
 ### Repeat Last Change
 

@@ -13,6 +13,14 @@ All notable changes to the ModalEdit extension will be documented in this file.
   the command executes. When `docScope` is set to `true`, the command falls back
   to single-cursor mode for document-wide searches.
 
+### Enhancements
+
+- Added `unicode` flag to `modaledit.selectBetween` command. When enabled, this
+  flag activates full Unicode support in regular expressions, including Unicode
+  property escapes like `\p{L}` (letters), `\p{Emoji}`, etc. This allows for
+  proper matching of international characters and emoji. The flag is optional
+  and defaults to `false` for backward compatibility.
+
 ## Version 1.0
 
 - Initial release

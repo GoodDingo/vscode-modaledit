@@ -110,6 +110,7 @@ interface SelectBetweenArgs {
     caseSensitive: boolean
     docScope: boolean
     nested: boolean
+    unicode: boolean
 }
 /**
  * ## State Variables
@@ -1043,11 +1044,21 @@ function escapeRegexp(str?: string): string {
     return ensureRegexp(str?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 }
 /**
- * It the search string is undefined we construct a regexp that never matches 
+ * It the search string is undefined we construct a regexp that never matches
  * any input.
  */
 function ensureRegexp(str?: string): string {
     return str || "^$a"
+}
+/**
+ * Helper function to build regex flags for selectBetween command.
+ * Combines case sensitivity and unicode flags appropriately.
+ */
+function buildRegexFlags(caseSensitive: boolean, unicode: boolean): string {
+    let flags = "g"
+    if (!caseSensitive) flags += "i"
+    if (unicode) flags += "u"
+    return flags
 }
 /**
  * For selecting ranges of text between two characters (inside parenthesis, for
@@ -1110,7 +1121,7 @@ function selectBetween(args: SelectBetweenArgs) {
              * not changed.
              */
             let regexp = new RegExp(`(${open})|(${close})`,
-                args.caseSensitive ? "g" : "gi")
+                buildRegexFlags(args.caseSensitive, args.unicode))
             let text = doc.getText(new vscode.Range(startPos, lowPos))
             let matches = Array.from(text.matchAll(regexp))
             for (let i = matches.length - 1, openCnt = 1; i >= 0 && openCnt > 0;
@@ -1134,7 +1145,7 @@ function selectBetween(args: SelectBetweenArgs) {
              * of the first matching delimiter at the correct nesting level.
              */
             let regexp = new RegExp(`(${close})|(${open})`,
-                args.caseSensitive ? "g" : "gi")
+                buildRegexFlags(args.caseSensitive, args.unicode))
             let text = doc.getText(new vscode.Range(highPos, endPos))
             for (let match = regexp.exec(text), openCnt = 1;
                 match && openCnt > 0;
@@ -1205,7 +1216,7 @@ function selectBetween(args: SelectBetweenArgs) {
              * not changed.
              */
             let regexp = new RegExp(`(${open})|(${close})`,
-                args.caseSensitive ? "g" : "gi")
+                buildRegexFlags(args.caseSensitive, args.unicode))
             let text = doc.getText(new vscode.Range(startPos, lowPos))
             let matches = Array.from(text.matchAll(regexp))
             for (let i = matches.length - 1, openCnt = 1; i >= 0 && openCnt > 0;
@@ -1229,7 +1240,7 @@ function selectBetween(args: SelectBetweenArgs) {
              * of the first matching delimiter at the correct nesting level.
              */
             let regexp = new RegExp(`(${close})|(${open})`,
-                args.caseSensitive ? "g" : "gi")
+                buildRegexFlags(args.caseSensitive, args.unicode))
             let text = doc.getText(new vscode.Range(highPos, endPos))
             for (let match = regexp.exec(text), openCnt = 1;
                 match && openCnt > 0;
