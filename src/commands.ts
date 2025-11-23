@@ -494,7 +494,39 @@ export function enterNormal() {
     if (!typeSubscription)
         typeSubscription = vscode.commands.registerCommand("type", onType)
     setNormalMode(true)
-    cancelSelection()
+
+    // Handle escape behavior based on configuration
+    const escapeBehavior = actions.getEscapeBehavior()
+
+    switch (escapeBehavior) {
+        case "legacy":
+            // Legacy behavior: cancel selection but don't reset keymap
+            cancelSelection()
+            break
+
+        case "cancelKeychord":
+            if (actions.hasActiveKeychord()) {
+                // First escape: cancel keychord only, stay in visual
+                actions.resetKeymap()
+                currentKeySequence = []
+            } else {
+                // Second escape (no active keychord): cancel selection, go to normal
+                cancelSelection()
+            }
+            break
+
+        case "cancelKeychordAndSelection":
+            // Reset keymap and always cancel selection (go to normal mode)
+            actions.resetKeymap()
+            currentKeySequence = []
+            cancelSelection()
+            break
+
+        default:
+            // Fallback to legacy behavior if unknown value
+            cancelSelection()
+            break
+    }
 }
 /**
  * Conversely, when entering insert mode, we:

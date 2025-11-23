@@ -250,6 +250,16 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Is editor initially in normal mode?"
+				},
+				"modaledit.escapeBehavior": {
+					"type": "string",
+					"enum": [
+						"legacy",
+						"cancelKeychord",
+						"cancelKeychordAndSelection"
+					],
+					"default": "legacy",
+					"description": "Escape key behavior. 'legacy': current behavior (no-op in normal mode, cancel selection in visual mode). 'cancelKeychord': cancels incomplete multi-key sequences in both modes, stays in visual mode. 'cancelKeychordAndSelection': cancels keychord and selection, returns to normal mode."
 				}
 			}
 		},

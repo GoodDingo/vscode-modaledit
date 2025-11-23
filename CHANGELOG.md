@@ -2,6 +2,22 @@
 
 All notable changes to the ModalEdit extension will be documented in this file.
 
+## Version 2.2.2 (Unreleased)
+
+### Enhancements
+
+- Added `escapeBehavior` configuration setting to control how the Escape key
+  behaves when canceling incomplete multi-key sequences (keychords). Three
+  modes are available:
+  - `"legacy"` (default): Maintains current behavior for backward compatibility.
+    In normal mode, Escape does nothing. In visual mode, it cancels selection
+    and returns to normal mode.
+  - `"cancelKeychord"`: Cancels incomplete keychords in both normal and visual
+    modes. In visual mode, stays in visual mode after canceling the keychord
+    (requires a second Escape to exit visual mode).
+  - `"cancelKeychordAndSelection"`: Cancels both incomplete keychords and
+    selection in a single keypress, always returning to clean normal mode.
+
 ## Version 2.2.1
 
 ### Bug Fixes

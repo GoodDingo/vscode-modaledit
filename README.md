@@ -376,6 +376,31 @@ If you want VS Code to be in insert mode when it starts, set the
 `startInNormalMode` setting to `false`. By default, editor is in normal mode
 when you open it.
 
+### Escape Key Behavior
+
+The `escapeBehavior` setting controls how the Escape key behaves when canceling
+incomplete multi-key sequences (keychords) in normal and visual modes.
+
+| Value                         | Normal Mode Behavior | Visual Mode Behavior |
+| ----------------------------- | -------------------- | -------------------- |
+| `legacy` (default)            | No-op (current behavior) | Cancel selection, return to normal mode |
+| `cancelKeychord`              | Cancel incomplete keychord | Cancel keychord, stay in visual mode (next Esc exits visual) |
+| `cancelKeychordAndSelection`  | Cancel incomplete keychord | Cancel keychord and selection, return to normal mode |
+
+**Examples:**
+
+With `"escapeBehavior": "legacy"` (default, backward compatible):
+- In normal mode, typing `d` then `Esc` does nothing to the keychord state
+- In visual mode, typing `vi` then `Esc` cancels selection and returns to normal mode, but keychord persists
+
+With `"escapeBehavior": "cancelKeychord"`:
+- In normal mode, typing `d` then `Esc` cancels the incomplete keychord
+- In visual mode, typing `vi` then `Esc` cancels the incomplete keychord but stays in visual mode; press `Esc` again to exit visual mode
+
+With `"escapeBehavior": "cancelKeychordAndSelection"`:
+- In normal mode, typing `d` then `Esc` cancels the incomplete keychord
+- In visual mode, typing `vi` then `Esc` cancels both the keychord and selection, returning to clean normal mode in one keypress
+
 ### Example Configurations
 
 You can find example key bindings [here][7]. These are my own settings. The
