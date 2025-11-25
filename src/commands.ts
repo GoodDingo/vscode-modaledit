@@ -597,7 +597,7 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
          * The info given by search command is shown only as long there are
          * no other messages to show.
          */
-        let sec = "    " + currentKeySequence.join("")
+        let sec = "    " + currentKeySequence.map(key => key === " " ? "␣" : key).join("")
         if (help)
             sec = `${sec}    ${help}`
         if (searchInfo) {

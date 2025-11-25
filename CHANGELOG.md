@@ -17,6 +17,7 @@ All notable changes to the ModalEdit extension will be documented in this file.
     (requires a second Escape to exit visual mode).
   - `"cancelKeychordAndSelection"`: Cancels both incomplete keychords and
     selection in a single keypress, always returning to clean normal mode.
+- Spacebar now displays as '␣' in the status bar when part of a key sequence, making it visible instead of appearing as empty space.
 
 ## Version 2.2.1
 
