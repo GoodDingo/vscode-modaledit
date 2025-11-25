@@ -3,3 +3,12 @@ out
 node_modules
 .vscode-test/
 *.vsix
+docs/
+
+# Local development files (not for repo)
+CLAUDE.md
+.claude/
+Makefile
+extension-plan/
+cross-ext-communication-in-vscode.md
+plan-escape-extended-behavior.md
