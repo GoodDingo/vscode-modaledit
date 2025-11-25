@@ -180,6 +180,24 @@ let currentKeySequence: string[] = []
 let lastKeySequence: string[] = []
 let lastChange: string[] = []
 /**
+ * Extension context for cross-plugin communication via globalState.
+ */
+let extensionContext: vscode.ExtensionContext
+/**
+ * Output channel for logging mode state API operations.
+ */
+let outputChannel: vscode.OutputChannel
+/**
+ * Mode change subscriber registry for event notifications.
+ * Contains command names to invoke when mode changes.
+ */
+let modeChangeSubscribers: Set<string> = new Set()
+/**
+ * Cache of last known mode to detect changes.
+ * Will be initialized on first updateCursorAndStatusBar() call.
+ */
+let currentModeCache: string | undefined = undefined
+/**
  * Update VS Code context keys to expose ModalEdit state.
  * Called after any mode change or keychord state change.
  *
@@ -202,6 +220,10 @@ function updateContextKeys() {
     vscode.commands.executeCommand('setContext', 'modaledit.chordActive', actions.hasActiveKeychord())
 }
 /**
+ * Maximum number of subscribers allowed to prevent DOS attacks.
+ */
+const MAX_SUBSCRIBERS = 100
+/**
  * Single source of truth for current mode computation.
  * Derives mode from existing state variables without side effects.
  *
@@ -218,6 +240,60 @@ function getCurrentMode(): 'normal' | 'insert' | 'visual' | 'search' {
     if (normalMode && isSelecting()) return 'visual'
     if (normalMode) return 'normal'
     return 'insert'
+}
+/**
+ * Notify all registered subscribers when mode changes.
+ * Updates globalState for cross-plugin communication and broadcasts to dependent extensions.
+ *
+ * Defensive design:
+ * - Subscriber errors are logged but don't crash extension
+ * - GlobalState updates happen first (before subscriber notifications)
+ * - Parallel notification to prevent slow subscribers blocking fast ones
+ * - Dead subscribers are detected and cleaned up
+ *
+ * @param newMode The new mode to broadcast
+ */
+async function notifyModeChange(newMode: string): Promise<void> {
+    outputChannel.appendLine(`[Mode Change] ${newMode}`)
+
+    // Update globalState for cross-plugin communication
+    try {
+        await extensionContext.globalState.update('modaledit.mode', newMode)
+        outputChannel.appendLine(`[GlobalState] Updated to: ${newMode}`)
+    } catch (error) {
+        outputChannel.appendLine(`[GlobalState] ERROR: ${error}`)
+    }
+
+    // Notify all subscribers in parallel (don't let slow subscribers block fast ones)
+    if (modeChangeSubscribers.size > 0) {
+        outputChannel.appendLine(`[Subscribers] Notifying ${modeChangeSubscribers.size} subscribers`)
+
+        const notifications = Array.from(modeChangeSubscribers).map(async (commandName) => {
+            try {
+                await vscode.commands.executeCommand(commandName, newMode)
+                return { commandName, success: true }
+            } catch (error) {
+                outputChannel.appendLine(`[Subscriber Error] ${commandName}: ${error}`)
+                return { commandName, success: false, error }
+            }
+        })
+
+        const results = await Promise.allSettled(notifications)
+
+        // Clean up dead subscribers (commands that consistently fail)
+        const deadSubscribers: string[] = []
+        results.forEach((result, index) => {
+            if (result.status === 'fulfilled' && result.value.success === false) {
+                const commandName = Array.from(modeChangeSubscribers)[index]
+                deadSubscribers.push(commandName)
+            }
+        })
+
+        if (deadSubscribers.length > 0) {
+            outputChannel.appendLine(`[Cleanup] Removing ${deadSubscribers.length} dead subscribers`)
+            deadSubscribers.forEach(cmd => modeChangeSubscribers.delete(cmd))
+        }
+    }
 }
 /**
  * ## Command Names
@@ -255,6 +331,13 @@ const importPresetsId = "modaledit.importPresets"
  * calls this function). We also create the status bar item.
  */
 export function register(context: vscode.ExtensionContext) {
+    // Store context for cross-plugin communication via globalState
+    extensionContext = context
+
+    // Create output channel for logging
+    outputChannel = vscode.window.createOutputChannel('ModalEdit')
+    outputChannel.appendLine('[Initialization] ModalEdit mode state API initialized')
+
     context.subscriptions.push(
         vscode.commands.registerCommand(toggleId, toggle),
         vscode.commands.registerCommand(enterNormalId, enterNormal),
@@ -265,7 +348,7 @@ export function register(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(toggleSelectionId, toggleSelection),
         vscode.commands.registerCommand(enableSelectionId, enableSelection),
         vscode.commands.registerCommand(cancelSelectionId, cancelSelection),
-        vscode.commands.registerCommand(cancelMultipleSelectionsId,
+        vscode.commands.registerCommand(cancelMultipleSelectionsId, 
             cancelMultipleSelections),
         vscode.commands.registerCommand(searchId, search),
         vscode.commands.registerCommand(cancelSearchId, cancelSearch),
@@ -282,7 +365,90 @@ export function register(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(typeNormalKeysId, typeNormalKeys),
         vscode.commands.registerCommand(selectBetweenId, selectBetween),
         vscode.commands.registerCommand(repeatLastChangeId, repeatLastChange),
-        vscode.commands.registerCommand(importPresetsId, importPresets)
+        vscode.commands.registerCommand(importPresetsId, importPresets),
+
+        // Cross-plugin communication API
+        vscode.commands.registerCommand("modaledit.getMode",
+            () => getCurrentMode()),
+
+        vscode.commands.registerCommand("modaledit.subscribeToModeChanges",
+            (commandName: string) => {
+                // Input validation: must be non-empty string, trimmed
+                if (typeof commandName !== 'string') {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Invalid type (${typeof commandName})`)
+                    return false
+                }
+
+                const trimmed = commandName.trim()
+                if (trimmed.length === 0) {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Empty command name`)
+                    return false
+                }
+
+                // Rate limiting: prevent DOS attacks
+                if (modeChangeSubscribers.size >= MAX_SUBSCRIBERS) {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Max subscribers reached (${MAX_SUBSCRIBERS})`)
+                    return false
+                }
+
+                // Check if already subscribed
+                if (modeChangeSubscribers.has(trimmed)) {
+                    outputChannel.appendLine(`[Subscribe] Already subscribed: ${trimmed}`)
+                    return true
+                }
+
+                modeChangeSubscribers.add(trimmed)
+                outputChannel.appendLine(`[Subscribe] Added: ${trimmed} (total: ${modeChangeSubscribers.size})`)
+                return true
+            }),
+
+        vscode.commands.registerCommand("modaledit.unsubscribeFromModeChanges",
+            (commandName: string) => {
+                const trimmed = typeof commandName === 'string' ? commandName.trim() : ''
+                const wasSubscribed = modeChangeSubscribers.delete(trimmed)
+                if (wasSubscribed) {
+                    outputChannel.appendLine(`[Unsubscribe] Removed: ${trimmed} (total: ${modeChangeSubscribers.size})`)
+                } else {
+                    outputChannel.appendLine(`[Unsubscribe] Not found: ${trimmed}`)
+                }
+                return wasSubscribed
+            }),
+
+        vscode.commands.registerCommand("modaledit.debugModeState",
+            () => {
+                const currentMode = getCurrentMode()
+                const subscribers = Array.from(modeChangeSubscribers)
+
+                const diagnostics = {
+                    currentMode,
+                    normalMode,
+                    searching,
+                    selecting,
+                    subscriberCount: modeChangeSubscribers.size,
+                    subscribers,
+                    maxSubscribers: MAX_SUBSCRIBERS,
+                    cacheInitialized: currentModeCache !== undefined
+                }
+
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.appendLine('[DIAGNOSTICS] Mode State Debug Information')
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.appendLine(`Current Mode: ${currentMode}`)
+                outputChannel.appendLine(`Mode Flags: normal=${normalMode}, searching=${searching}, selecting=${selecting}`)
+                outputChannel.appendLine(`Cache: ${currentModeCache === undefined ? 'uninitialized' : currentModeCache}`)
+                outputChannel.appendLine(`Subscribers: ${subscribers.length}/${MAX_SUBSCRIBERS}`)
+                if (subscribers.length > 0) {
+                    subscribers.forEach((sub, idx) => {
+                        outputChannel.appendLine(`  ${idx + 1}. ${sub}`)
+                    })
+                } else {
+                    outputChannel.appendLine(`  (none)`)
+                }
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.show()
+
+                return diagnostics
+            })
     )
     mainStatusBar = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Left)
@@ -468,6 +634,23 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
     else {
         mainStatusBar.hide()
         secondaryStatusBar.hide()
+    }
+
+    // Detect mode changes and notify subscribers
+    const newMode = getCurrentMode()
+    if (newMode !== currentModeCache) {
+        const oldMode = currentModeCache
+        currentModeCache = newMode
+        // Fire-and-forget notification (don't await to avoid blocking UI updates)
+        notifyModeChange(newMode).catch((error) => {
+            outputChannel.appendLine(`[Notification Error] Failed to notify mode change: ${error}`)
+        })
+        // Log mode transition for debugging
+        if (oldMode !== undefined) {
+            outputChannel.appendLine(`[Mode Transition] ${oldMode} → ${newMode}`)
+        } else {
+            outputChannel.appendLine(`[Mode Initialized] ${newMode}`)
+        }
     }
 
     // Update context keys to reflect current mode (including external selection changes like Cmd+D)

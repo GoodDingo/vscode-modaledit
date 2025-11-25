@@ -238,3 +238,22 @@ Two new commands (courtesy of [David Little](https://github.com/haberdashPI)):
 ### Enhancements
 
 - Spacebar now displays as '␣' in the status bar when part of a key sequence, making it visible instead of appearing as empty space.
+
+## Version 2.4.0
+
+### New Features - Cross-Plugin Communication API
+
+- **`modaledit.getMode` command** - Returns current mode as string ('normal', 'insert', 'visual', or 'search'). Allows other extensions to query ModalEdit's state.
+
+- **`modaledit.subscribeToModeChanges` command** - Register a command to be notified when mode changes. The registered command receives the new mode as a string parameter. Supports up to 100 subscribers with automatic dead subscriber cleanup.
+
+- **`modaledit.unsubscribeFromModeChanges` command** - Unregister from mode change notifications.
+
+- **`modaledit.debugModeState` command** - Diagnostic command that outputs current mode state, subscriber list, and internal flags to the ModalEdit output channel.
+
+- **GlobalState integration** - Current mode is stored in `extensionContext.globalState` under the key `'modaledit.mode'` for persistent cross-extension access.
+
+### Internal
+
+- Add output channel "ModalEdit" for logging mode state API operations and debugging.
+- Implement defensive subscriber notification with error handling, parallel execution, and automatic cleanup of failed subscribers.
