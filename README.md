@@ -115,7 +115,7 @@ strings:
 | `__keySequence` | `string[]` | Array of keys that were pressed to invoke the command.
 | `__keys`        | `string[]` | Alias to the `__keySequence` variable.
 | `__rkeys`       | `string[]` | Contains the `__keys` array reversed. This is handy when you want to access the last characters of the array as they will be first in `__rkeys`.
-| `__cmd`         | `string`   | Containst the `__keys` array joined together to a string. Now you don't have to do this explicitly in you expressions. 
+| `__cmd`         | `string`   | Containst the `__keys` array joined together to a string. Now you don't have to do this explicitly in you expressions.
 | `__rcmd`        | `string`   | Containst the `__rkeys` array joined together to a string.
 
 The `repeat` property allows you to run the command multiple times. If the value
@@ -327,6 +327,57 @@ there. If your configuration is ok, you should see the following message.
 
 ![output log](images/output-log.png)
 
+### VS Code Context Keys
+
+ModalEdit exposes context keys that can be used in VS Code's native keybindings
+(`keybindings.json`). This enables integration with other extensions and allows
+ModalEdit-aware bindings outside of the `modaledit.keybindings` configuration.
+
+| Context Key              | Type      | Description
+| ------------------------ | --------- | -------------------------------------------------
+| `modaledit.normal`       | `boolean` | True when in normal mode (legacy, use `normalMode` for clarity).
+| `modaledit.normalMode`   | `boolean` | True when in normal mode (not visual or search).
+| `modaledit.insertMode`   | `boolean` | True when in insert mode.
+| `modaledit.selectingMode`| `boolean` | True when in visual/selection mode.
+| `modaledit.searchMode`   | `boolean` | True when incremental search is active.
+| `modaledit.currentMode`  | `string`  | Current mode as string: `'normal'`, `'insert'`, `'visual'`, or `'search'`.
+| `modaledit.chordActive`  | `boolean` | True when a multi-key sequence is in progress.
+
+These context keys are mutually exclusive for modes—exactly one of `normalMode`,
+`insertMode`, `selectingMode`, or `searchMode` is true at any time. The
+`chordActive` key is independent and can be true in any mode.
+
+Example usage in `keybindings.json`:
+```js
+// Breaking out of keychord
+{
+    "key": "escape",
+    "command": "modaledit.cancelChord",
+    "when": "modaledit.chordActive"
+},
+
+// Preserving multiple cursors when returing to normal mode
+{
+    "key": "escape",
+    "command": "modaledit.enterNormalPreservingMultiCursor",
+    "when": "(modaledit.selectingMode || modaledit.insertMode) && !modaledit.chordActive &&  editorTextFocus && !suggestWidgetMultipleSuggestions && !suggestWidgetVisible"
+},
+
+// Multi-cursor in normal mode drops them
+{
+    "key": "escape",
+    "command": "removeSecondaryCursors",
+    "when": "(modaledit.normalMode && !modaledit.chordActive) && editorTextFocus && !suggestWidgetMultipleSuggestions && !suggestWidgetVisible"
+},
+
+// Run command only in normal mode (but not in visual/search mode)
+{
+    "key": "ctrl+j",
+    "command": "workbench.action.quickOpen",
+    "when": "editorTextFocus && modaledit.normalMode"
+}
+```
+
 ### Changing Cursors
 
 You can set the cursor shape shown in each mode by changing the following
@@ -418,6 +469,8 @@ commands require any arguments.
 | `modaledit.enableSelection`           | Turn selection mode on.
 | `modaledit.cancelSelection`           | Cancel selection mode and clear selection.
 | `modaledit.cancelMultipleSelections`  | Cancel selection mode and clear selections, but preserve multiple cursors.
+| `modaledit.cancelChord`               | Cancels in-progress multi-key sequence and resets to base keymap.
+| `modaledit.enterNormalPreservingMultiCursor` | Switches to normal mode, preserving multiple cursors.
 
 ### Incremental Search
 
