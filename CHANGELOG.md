@@ -2,21 +2,47 @@
 
 All notable changes to the ModalEdit extension will be documented in this file.
 
-## Version 2.2.2 (Unreleased)
+## Version 2.3.0 (Unreleased)
+
+### New Features
+
+- **`modaledit.cancelChord` command** - First-class command to cancel in-progress multi-key sequences. Usable in both ModalEdit keybindings and VS Code native keybindings.
+
+- **`modaledit.enterNormalPreservingMultiCursor` command** - Variant of `enterNormal()` that preserves multiple cursors when exiting visual mode.
+
+- **Conditional variables** - New variables for use in conditional commands:
+  - `__multicursor` - Detects multiple cursors
+  - `__hasChord` - Detects active keychord
+  - `__hasSelection` - Detects non-empty selection
+
+- **VS Code context keys** - Expose ModalEdit state to VS Code's native keybinding system:
+  - `modaledit.normalMode`
+  - `modaledit.insertMode` - Explicit insert mode context key, eliminating the need for negative conditions like `!(modaledit.normalMode || modaledit.selectingMode || modaledit.searchMode)`
+  - `modaledit.selectingMode` - Renamed from `visualMode` for consistency
+  - `modaledit.searchMode`
+  - `modaledit.chordActive`
+
+- **Advanced Escape configuration** - Users can now override the default Escape behavior using VS Code's keybindings.json with ModalEdit context keys. Supports keychord cancellation, multi-cursor preservation, and context-aware behavior. See README.md "Configuring Advanced Escape Behavior" for examples.
+
+### Changed - BREAKING
+
+- **Context keys are now mutually exclusive**: Exactly one mode flag is true at any time
+  - Previously: `normalMode=true` could coexist with `selectingMode=true` or `searchMode=true`
+  - Now: Only one mode flag is true (normal OR insert OR visual OR search)
+  - **Migration**: Replace `modaledit.normalMode && modaledit.selectingMode` with just `modaledit.selectingMode`
+  - Rationale: Eliminates ambiguity and aligns with `getCurrentMode()` as single source of truth
+
+- **New `modaledit.currentMode` string context key**: Contains current mode as string value
+  - Values: `'normal'`, `'insert'`, `'visual'`, or `'search'`
+  - Enables string-based when clauses: `modaledit.currentMode == 'visual'`
+  - Supports `in` operator: `modaledit.currentMode in ['normal', 'visual']`
+
+### Bug Fixes
+
+- **Multi-cursor preservation** - Default `enterNormal()` behavior unchanged (still collapses multi-cursors), but users can now configure preservation via `enterNormalPreservingMultiCursor` command.
 
 ### Enhancements
 
-- Added `escapeBehavior` configuration setting to control how the Escape key
-  behaves when canceling incomplete multi-key sequences (keychords). Three
-  modes are available:
-  - `"legacy"` (default): Maintains current behavior for backward compatibility.
-    In normal mode, Escape does nothing. In visual mode, it cancels selection
-    and returns to normal mode.
-  - `"cancelKeychord"`: Cancels incomplete keychords in both normal and visual
-    modes. In visual mode, stays in visual mode after canceling the keychord
-    (requires a second Escape to exit visual mode).
-  - `"cancelKeychordAndSelection"`: Cancels both incomplete keychords and
-    selection in a single keypress, always returning to clean normal mode.
 - Spacebar now displays as '␣' in the status bar when part of a key sequence, making it visible instead of appearing as empty space.
 
 ## Version 2.2.1

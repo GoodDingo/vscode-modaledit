@@ -376,30 +376,104 @@ If you want VS Code to be in insert mode when it starts, set the
 `startInNormalMode` setting to `false`. By default, editor is in normal mode
 when you open it.
 
-### Escape Key Behavior
+### Conditional Variables
 
-The `escapeBehavior` setting controls how the Escape key behaves when canceling
-incomplete multi-key sequences (keychords) in normal and visual modes.
+The following variables are available in conditional command expressions:
 
-| Value                         | Normal Mode Behavior | Visual Mode Behavior |
-| ----------------------------- | -------------------- | -------------------- |
-| `legacy` (default)            | No-op (current behavior) | Cancel selection, return to normal mode |
-| `cancelKeychord`              | Cancel incomplete keychord | Cancel keychord, stay in visual mode (next Esc exits visual) |
-| `cancelKeychordAndSelection`  | Cancel incomplete keychord | Cancel keychord and selection, return to normal mode |
+| Variable | Type | Description |
+|----------|------|-------------|
+| `__selecting` | boolean | Whether in visual/selection mode |
+| `__selection` | string | Selected text content |
+| `__multicursor` | boolean | Whether multiple cursors are active (`selections.length > 1`) |
+| `__hasSelection` | boolean | Whether any selection has non-zero width |
+| `__hasChord` | boolean | Whether a multi-key sequence is in progress |
+| `__file`, `__line`, `__col`, `__char` | various | Editor position info |
+| `__keySequence`, `__keys`, `__rkeys` | array | Key sequence tracking |
 
-**Examples:**
+**Example: Smart Escape key**
 
-With `"escapeBehavior": "legacy"` (default, backward compatible):
-- In normal mode, typing `d` then `Esc` does nothing to the keychord state
-- In visual mode, typing `vi` then `Esc` cancels selection and returns to normal mode, but keychord persists
+```jsonc
+{
+  "modaledit.selectbindings": {
+    "escape": {
+      "condition": "(__multicursor ? 'multi' : 'single') + '-' + (__hasChord ? 'chord' : 'nochord')",
+      "single-chord": "modaledit.cancelChord",
+      "single-nochord": "modaledit.enterNormal",
+      "multi-chord": "modaledit.cancelChord",
+      "multi-nochord": ["modaledit.cancelMultipleSelections", "modaledit.enterNormal"]
+    }
+  }
+}
+```
 
-With `"escapeBehavior": "cancelKeychord"`:
-- In normal mode, typing `d` then `Esc` cancels the incomplete keychord
-- In visual mode, typing `vi` then `Esc` cancels the incomplete keychord but stays in visual mode; press `Esc` again to exit visual mode
+### VS Code Context Keys
 
-With `"escapeBehavior": "cancelKeychordAndSelection"`:
-- In normal mode, typing `d` then `Esc` cancels the incomplete keychord
-- In visual mode, typing `vi` then `Esc` cancels both the keychord and selection, returning to clean normal mode in one keypress
+ModalEdit exposes the following context keys for use in VS Code's native `keybindings.json`:
+
+| Context Key | Type | Description |
+|-------------|------|-------------|
+| `modaledit.normalMode` | boolean | True ONLY when in normal mode (mutually exclusive) |
+| `modaledit.insertMode` | boolean | True ONLY when in insert mode (mutually exclusive) |
+| `modaledit.selectingMode` | boolean | True ONLY when in visual/selection mode (mutually exclusive) |
+| `modaledit.searchMode` | boolean | True ONLY when in search mode (mutually exclusive) |
+| `modaledit.currentMode` | string | Current mode: `'normal'`, `'insert'`, `'visual'`, or `'search'` |
+| `modaledit.chordActive` | boolean | True when multi-key sequence is in progress |
+
+### Configuring Advanced Escape Behavior
+
+By default, Escape exits to normal mode when in visual mode. You can customize this behavior using VS Code's `keybindings.json` and ModalEdit's context keys.
+
+**Why customize?** The default Escape behavior:
+- Doesn't cancel incomplete keychords
+- Doesn't preserve multi-cursors when exiting visual mode
+- Works the same in all contexts
+
+**To add smart Escape behavior**, add this to your `keybindings.json` (Preferences: Open Keyboard Shortcuts (JSON)):
+
+```jsonc
+[
+  // SEARCH MODE: Cancel search (highest priority)
+  {
+    "key": "escape",
+    "command": "modaledit.cancelSearch",
+    "when": "editorTextFocus && modaledit.searchMode"
+  },
+
+  // VISUAL MODE: Cancel keychord if active
+  {
+    "key": "escape",
+    "command": "modaledit.cancelChord",
+    "when": "editorTextFocus && modaledit.selectingMode && modaledit.chordActive"
+  },
+
+  // VISUAL MODE: Exit to normal, preserve multi-cursors
+  {
+    "key": "escape",
+    "command": "modaledit.enterNormalPreservingMultiCursor",
+    "when": "editorTextFocus && modaledit.selectingMode && !modaledit.chordActive && editorHasMultipleSelections"
+  },
+
+  // VISUAL MODE: Exit to normal, single cursor
+  {
+    "key": "escape",
+    "command": "modaledit.enterNormal",
+    "when": "editorTextFocus && modaledit.selectingMode && !modaledit.chordActive && !editorHasMultipleSelections"
+  },
+
+  // NORMAL MODE: Cancel keychord if active
+  {
+    "key": "escape",
+    "command": "modaledit.cancelChord",
+    "when": "editorTextFocus && modaledit.normalMode && modaledit.chordActive"
+  }
+]
+```
+
+**Notes:**
+- Your keybindings.json overrides the extension's default behavior
+- Order matters: VS Code processes keybindings from top to bottom
+- Use VS Code's built-in `editorHasMultipleSelections` context key for multi-cursor detection
+- You can customize any subset of these behaviors
 
 ### Example Configurations
 

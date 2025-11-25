@@ -106,12 +106,7 @@ let selectStatusColor: string | undefined
  */
 let startInNormalMode: boolean
 /**
- * The escape behavior configuration determines how the Escape key behaves
- * in different modes when canceling multi-key sequences (keychords).
- */
-let escapeBehavior: string
-/**
- * The root of the action configuration is keymap. This defines what key 
+ * The root of the action configuration is keymap. This defines what key
  * sequences will be run when keys are pressed in normal mode.
  */
 let baseKeymap: Keymap
@@ -166,10 +161,6 @@ export function getSelectStyles():
 
 export function getStartInNormalMode(): boolean {
     return startInNormalMode
-}
-
-export function getEscapeBehavior(): string {
-    return escapeBehavior
 }
 
 export function hasActiveKeychord(): boolean {
@@ -228,7 +219,6 @@ export function updateFromConfig(): void {
     searchStatusColor = config.get("searchStatusColor") || undefined
     selectStatusColor = config.get("selectStatusColor") || undefined
     startInNormalMode = config.get<boolean>("startInNormalMode", true)
-    escapeBehavior = config.get<string>("escapeBehavior", "legacy")
 }
 /**
  * The following function updates base keymap and select-mode keymap.
@@ -443,6 +433,9 @@ function evalString(str: string, __selecting: boolean): any {
     let __cmd = __keys.join('')
     let __rcmd = __rkeys.join('')
     let editor = vscode.window.activeTextEditor
+    let __multicursor = editor ? editor.selections.length > 1 : false
+    let __hasSelection = editor ? editor.selections.some(sel => !sel.isEmpty) : false
+    let __hasChord = currentKeymap !== null
     if (editor) {
         let cursor = editor.selection.active
         __file = editor.document.fileName

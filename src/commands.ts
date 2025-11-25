@@ -198,6 +198,28 @@ let modeChangeSubscribers: Set<string> = new Set()
  */
 let currentModeCache: string | undefined = undefined
 /**
+ * Update VS Code context keys to expose ModalEdit state.
+ * Called after any mode change or keychord state change.
+ *
+ * Mode context keys are mutually exclusive - exactly one is true at any time.
+ * Uses getCurrentMode() as single source of truth.
+ */
+function updateContextKeys() {
+    const currentMode = getCurrentMode()
+
+    // Set mutually exclusive boolean mode flags (exactly one is true)
+    vscode.commands.executeCommand('setContext', 'modaledit.normalMode', currentMode === 'normal')
+    vscode.commands.executeCommand('setContext', 'modaledit.insertMode', currentMode === 'insert')
+    vscode.commands.executeCommand('setContext', 'modaledit.selectingMode', currentMode === 'visual')
+    vscode.commands.executeCommand('setContext', 'modaledit.searchMode', currentMode === 'search')
+
+    // String-based mode context key
+    vscode.commands.executeCommand('setContext', 'modaledit.currentMode', currentMode)
+
+    // Keychord state (independent of mode)
+    vscode.commands.executeCommand('setContext', 'modaledit.chordActive', actions.hasActiveKeychord())
+}
+/**
  * Maximum number of subscribers allowed to prevent DOS attacks.
  */
 const MAX_SUBSCRIBERS = 100
@@ -281,6 +303,8 @@ async function notifyModeChange(newMode: string): Promise<void> {
 const toggleId = "modaledit.toggle"
 const enterNormalId = "modaledit.enterNormal"
 const enterInsertId = "modaledit.enterInsert"
+const cancelChordId = "modaledit.cancelChord"
+const enterNormalPreservingMultiCursorId = "modaledit.enterNormalPreservingMultiCursor"
 const toggleSelectionId = "modaledit.toggleSelection"
 const enableSelectionId = "modaledit.enableSelection"
 const cancelSelectionId = "modaledit.cancelSelection"
@@ -318,6 +342,9 @@ export function register(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(toggleId, toggle),
         vscode.commands.registerCommand(enterNormalId, enterNormal),
         vscode.commands.registerCommand(enterInsertId, enterInsert),
+        vscode.commands.registerCommand(cancelChordId, cancelChord),
+        vscode.commands.registerCommand(enterNormalPreservingMultiCursorId,
+            enterNormalPreservingMultiCursor),
         vscode.commands.registerCommand(toggleSelectionId, toggleSelection),
         vscode.commands.registerCommand(enableSelectionId, enableSelection),
         vscode.commands.registerCommand(cancelSelectionId, cancelSelection),
@@ -448,6 +475,7 @@ async function onType(event: { text: string }) {
         currentKeySequence = []
     }
     updateCursorAndStatusBar(vscode.window.activeTextEditor, actions.getHelp())
+    updateContextKeys()
 }
 /**
  * Whenever text changes in an active editor, we set a flag. This flag is
@@ -494,39 +522,7 @@ export function enterNormal() {
     if (!typeSubscription)
         typeSubscription = vscode.commands.registerCommand("type", onType)
     setNormalMode(true)
-
-    // Handle escape behavior based on configuration
-    const escapeBehavior = actions.getEscapeBehavior()
-
-    switch (escapeBehavior) {
-        case "legacy":
-            // Legacy behavior: cancel selection but don't reset keymap
-            cancelSelection()
-            break
-
-        case "cancelKeychord":
-            if (actions.hasActiveKeychord()) {
-                // First escape: cancel keychord only, stay in visual
-                actions.resetKeymap()
-                currentKeySequence = []
-            } else {
-                // Second escape (no active keychord): cancel selection, go to normal
-                cancelSelection()
-            }
-            break
-
-        case "cancelKeychordAndSelection":
-            // Reset keymap and always cancel selection (go to normal mode)
-            actions.resetKeymap()
-            currentKeySequence = []
-            cancelSelection()
-            break
-
-        default:
-            // Fallback to legacy behavior if unknown value
-            cancelSelection()
-            break
-    }
+    cancelSelection()
 }
 /**
  * Conversely, when entering insert mode, we:
@@ -548,6 +544,31 @@ export function enterInsert() {
     setNormalMode(false)
 }
 /**
+ * Cancel any in-progress multi-key sequence (keychord).
+ * Clears the keymap state and status bar display.
+ * No-op if no keychord is active.
+ */
+function cancelChord() {
+    if (actions.hasActiveKeychord()) {
+        actions.resetKeymap()
+        currentKeySequence = []
+        updateCursorAndStatusBar(vscode.window.activeTextEditor)
+        updateContextKeys()
+    }
+}
+/**
+ * Enter normal mode while preserving multiple cursors.
+ * Unlike enterNormal(), uses cancelMultipleSelections() instead of cancelSelection().
+ */
+export function enterNormalPreservingMultiCursor() {
+    actions.abortActions()
+    cancelSearch()
+    if (!typeSubscription)
+        typeSubscription = vscode.commands.registerCommand("type", onType)
+    setNormalMode(true)
+    cancelMultipleSelections()
+}
+/**
  * The rest of the state handling is delegated to subroutines that do specific
  * things. `setNormalMode` sets or resets the VS Code `modaledit.normal` context.
  * This can be used in "standard" key bindings. Then it sets the `normalMode`
@@ -560,6 +581,7 @@ async function setNormalMode(value: boolean): Promise<void> {
             value)
         normalMode = value
         updateCursorAndStatusBar(editor)
+        updateContextKeys()
     }
 }
 /**
@@ -630,6 +652,9 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
             outputChannel.appendLine(`[Mode Initialized] ${newMode}`)
         }
     }
+
+    // Update context keys to reflect current mode (including external selection changes like Cmd+D)
+    updateContextKeys()
 }
 /**
  * ## Selection Commands
@@ -644,6 +669,7 @@ async function cancelSelection(): Promise<void> {
         await vscode.commands.executeCommand("cancelSelection")
         selecting = false
         updateCursorAndStatusBar(vscode.window.activeTextEditor)
+        updateContextKeys()
     }
 }
 /**
@@ -679,6 +705,7 @@ async function toggleSelection(): Promise<void> {
 function enableSelection() {
     selecting = true;
     updateCursorAndStatusBar(vscode.window.activeTextEditor)
+    updateContextKeys()
 }
 /**
  * The following helper function actually determines, if a selection is active.
@@ -717,6 +744,7 @@ async function setSearching(value: boolean) {
     await vscode.commands.executeCommand("setContext",
         "modaledit.searching", value)
     updateCursorAndStatusBar(vscode.window.activeTextEditor)
+    updateContextKeys()
     if (!(value || searchReturnToNormal))
         enterInsert()
 }
