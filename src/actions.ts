@@ -162,6 +162,10 @@ export function getSelectStyles():
 export function getStartInNormalMode(): boolean {
     return startInNormalMode
 }
+
+export function hasActiveKeychord(): boolean {
+    return currentKeymap !== null
+}
 /**
  * You can also set the last command from outside the module.
  */
@@ -429,6 +433,9 @@ function evalString(str: string, __selecting: boolean): any {
     let __cmd = __keys.join('')
     let __rcmd = __rkeys.join('')
     let editor = vscode.window.activeTextEditor
+    let __multicursor = editor ? editor.selections.length > 1 : false
+    let __hasSelection = editor ? editor.selections.some(sel => !sel.isEmpty) : false
+    let __hasChord = currentKeymap !== null
     if (editor) {
         let cursor = editor.selection.active
         __file = editor.document.fileName
@@ -470,7 +477,16 @@ export function abortActions() {
     abort = true
 }
 /**
- * Parameterized commands can get their arguments in two forms: as a string 
+ * Reset the keymap state machine to clear any in-progress multi-key sequences.
+ * This is used when the user presses Escape to cancel an incomplete keychord.
+ */
+export function resetKeymap() {
+    currentKeymap = null
+    keySequence = []
+    keySeqStack = []
+}
+/**
+ * Parameterized commands can get their arguments in two forms: as a string
  * that is evaluated to get the actual arguments, or as an object. Before 
  * executing the command, we inspect the `repeat` property. If it is string
  * we evaluate it, and check if the result is a number. If so, we update the 

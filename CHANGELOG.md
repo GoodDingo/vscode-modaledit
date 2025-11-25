@@ -214,3 +214,27 @@ Two new commands (courtesy of [David Little](https://github.com/haberdashPI)):
   proper matching of international characters and emoji. The flag is optional
   and defaults to `false` for backward compatibility.
   
+## Version 2.3.0
+
+### New Features
+
+- **`modaledit.cancelChord` command** - First-class command to cancel in-progress multi-key sequences. Usable in both ModalEdit keybindings and VS Code native keybindings.
+
+- **`modaledit.enterNormalPreservingMultiCursor` command** - Variant of `enterNormal()` that preserves multiple cursors when exiting visual mode.
+
+- **Conditional variables** - New variables for use in conditional commands:
+  - `__multicursor` - Detects multiple cursors
+  - `__hasChord` - Detects active keychord
+  - `__hasSelection` - Detects non-empty selection (including seletion on non-active line)
+
+- **VS Code context keys** - Expose ModalEdit state to VS Code's native keybinding system:
+  - `modaledit.normalMode`
+  - `modaledit.insertMode` - Explicit insert mode context key
+  - `modaledit.selectingMode` - Visual/selection mode
+  - `modaledit.searchMode`
+  - `modaledit.currentMode` - String-based mode context (`'normal'`, `'insert'`, `'visual'`, `'search'`)
+  - `modaledit.chordActive` - True when multi-key sequence is in progress
+
+### Enhancements
+
+- Spacebar now displays as '␣' in the status bar when part of a key sequence, making it visible instead of appearing as empty space.
