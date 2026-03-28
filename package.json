@@ -2,7 +2,7 @@
 	"name": "vscode-modaledit",
 	"displayName": "ModalEdit",
 	"description": "Configurable modal editing engine with built-in Vim keymaps",
-	"version": "2.2.0",
+	"version": "2.3.0",
 	"publisher": "johtela",
 	"engines": {
 		"vscode": "^1.103.0"
@@ -267,6 +267,14 @@
 				"title": "ModalEdit: Insert mode"
 			},
 			{
+				"command": "modaledit.cancelChord",
+				"title": "ModalEdit: Cancel active keychord"
+			},
+			{
+				"command": "modaledit.enterNormalPreservingMultiCursor",
+				"title": "ModalEdit: Enter normal mode preserving multi-cursor"
+			},
+			{
 				"command": "modaledit.defineBookmark",
 				"title": "ModalEdit: Define bookmark"
 			},
@@ -289,6 +297,22 @@
 			{
 				"command": "modaledit.importPresets",
 				"title": "ModalEdit: Import preset keybindings"
+			},
+			{
+				"command": "modaledit.getMode",
+				"title": "ModalEdit: Get Current Mode"
+			},
+			{
+				"command": "modaledit.subscribeToModeChanges",
+				"title": "ModalEdit: Subscribe to Mode Changes"
+			},
+			{
+				"command": "modaledit.unsubscribeFromModeChanges",
+				"title": "ModalEdit: Unsubscribe from Mode Changes"
+			},
+			{
+				"command": "modaledit.debugModeState",
+				"title": "ModalEdit: Debug Mode State (Diagnostics)"
 			}
 		],
 		"keybindings": [

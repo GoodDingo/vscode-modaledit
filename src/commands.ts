@@ -110,6 +110,7 @@ interface SelectBetweenArgs {
     caseSensitive: boolean
     docScope: boolean
     nested: boolean
+    unicode: boolean
 }
 /**
  * ## State Variables
@@ -179,6 +180,122 @@ let currentKeySequence: string[] = []
 let lastKeySequence: string[] = []
 let lastChange: string[] = []
 /**
+ * Extension context for cross-plugin communication via globalState.
+ */
+let extensionContext: vscode.ExtensionContext
+/**
+ * Output channel for logging mode state API operations.
+ */
+let outputChannel: vscode.OutputChannel
+/**
+ * Mode change subscriber registry for event notifications.
+ * Contains command names to invoke when mode changes.
+ */
+let modeChangeSubscribers: Set<string> = new Set()
+/**
+ * Cache of last known mode to detect changes.
+ * Will be initialized on first updateCursorAndStatusBar() call.
+ */
+let currentModeCache: string | undefined = undefined
+/**
+ * Update VS Code context keys to expose ModalEdit state.
+ * Called after any mode change or keychord state change.
+ *
+ * Mode context keys are mutually exclusive - exactly one is true at any time.
+ * Uses getCurrentMode() as single source of truth.
+ */
+function updateContextKeys() {
+    const currentMode = getCurrentMode()
+
+    // Set mutually exclusive boolean mode flags (exactly one is true)
+    vscode.commands.executeCommand('setContext', 'modaledit.normalMode', currentMode === 'normal')
+    vscode.commands.executeCommand('setContext', 'modaledit.insertMode', currentMode === 'insert')
+    vscode.commands.executeCommand('setContext', 'modaledit.selectingMode', currentMode === 'visual')
+    vscode.commands.executeCommand('setContext', 'modaledit.searchMode', currentMode === 'search')
+
+    // String-based mode context key
+    vscode.commands.executeCommand('setContext', 'modaledit.currentMode', currentMode)
+
+    // Keychord state (independent of mode)
+    vscode.commands.executeCommand('setContext', 'modaledit.chordActive', actions.hasActiveKeychord())
+}
+/**
+ * Maximum number of subscribers allowed to prevent DOS attacks.
+ */
+const MAX_SUBSCRIBERS = 100
+/**
+ * Single source of truth for current mode computation.
+ * Derives mode from existing state variables without side effects.
+ *
+ * Priority order (highest to lowest):
+ * 1. SEARCH - Temporary overlay mode
+ * 2. VISUAL - Selection active in normal mode
+ * 3. NORMAL - Default modal editing mode
+ * 4. INSERT - Standard VS Code editing mode
+ *
+ * @returns Current mode as one of: 'normal', 'insert', 'visual', 'search'
+ */
+function getCurrentMode(): 'normal' | 'insert' | 'visual' | 'search' {
+    if (searching) return 'search'
+    if (normalMode && isSelecting()) return 'visual'
+    if (normalMode) return 'normal'
+    return 'insert'
+}
+/**
+ * Notify all registered subscribers when mode changes.
+ * Updates globalState for cross-plugin communication and broadcasts to dependent extensions.
+ *
+ * Defensive design:
+ * - Subscriber errors are logged but don't crash extension
+ * - GlobalState updates happen first (before subscriber notifications)
+ * - Parallel notification to prevent slow subscribers blocking fast ones
+ * - Dead subscribers are detected and cleaned up
+ *
+ * @param newMode The new mode to broadcast
+ */
+async function notifyModeChange(newMode: string): Promise<void> {
+    outputChannel.appendLine(`[Mode Change] ${newMode}`)
+
+    // Update globalState for cross-plugin communication
+    try {
+        await extensionContext.globalState.update('modaledit.mode', newMode)
+        outputChannel.appendLine(`[GlobalState] Updated to: ${newMode}`)
+    } catch (error) {
+        outputChannel.appendLine(`[GlobalState] ERROR: ${error}`)
+    }
+
+    // Notify all subscribers in parallel (don't let slow subscribers block fast ones)
+    if (modeChangeSubscribers.size > 0) {
+        outputChannel.appendLine(`[Subscribers] Notifying ${modeChangeSubscribers.size} subscribers`)
+
+        const notifications = Array.from(modeChangeSubscribers).map(async (commandName) => {
+            try {
+                await vscode.commands.executeCommand(commandName, newMode)
+                return { commandName, success: true }
+            } catch (error) {
+                outputChannel.appendLine(`[Subscriber Error] ${commandName}: ${error}`)
+                return { commandName, success: false, error }
+            }
+        })
+
+        const results = await Promise.allSettled(notifications)
+
+        // Clean up dead subscribers (commands that consistently fail)
+        const deadSubscribers: string[] = []
+        results.forEach((result, index) => {
+            if (result.status === 'fulfilled' && result.value.success === false) {
+                const commandName = Array.from(modeChangeSubscribers)[index]
+                deadSubscribers.push(commandName)
+            }
+        })
+
+        if (deadSubscribers.length > 0) {
+            outputChannel.appendLine(`[Cleanup] Removing ${deadSubscribers.length} dead subscribers`)
+            deadSubscribers.forEach(cmd => modeChangeSubscribers.delete(cmd))
+        }
+    }
+}
+/**
  * ## Command Names
  *
  * Since command names are easy to misspell, we define them as constants.
@@ -186,6 +303,8 @@ let lastChange: string[] = []
 const toggleId = "modaledit.toggle"
 const enterNormalId = "modaledit.enterNormal"
 const enterInsertId = "modaledit.enterInsert"
+const cancelChordId = "modaledit.cancelChord"
+const enterNormalPreservingMultiCursorId = "modaledit.enterNormalPreservingMultiCursor"
 const toggleSelectionId = "modaledit.toggleSelection"
 const enableSelectionId = "modaledit.enableSelection"
 const cancelSelectionId = "modaledit.cancelSelection"
@@ -212,10 +331,20 @@ const importPresetsId = "modaledit.importPresets"
  * calls this function). We also create the status bar item.
  */
 export function register(context: vscode.ExtensionContext) {
+    // Store context for cross-plugin communication via globalState
+    extensionContext = context
+
+    // Create output channel for logging
+    outputChannel = vscode.window.createOutputChannel('ModalEdit')
+    outputChannel.appendLine('[Initialization] ModalEdit mode state API initialized')
+
     context.subscriptions.push(
         vscode.commands.registerCommand(toggleId, toggle),
         vscode.commands.registerCommand(enterNormalId, enterNormal),
         vscode.commands.registerCommand(enterInsertId, enterInsert),
+        vscode.commands.registerCommand(cancelChordId, cancelChord),
+        vscode.commands.registerCommand(enterNormalPreservingMultiCursorId,
+            enterNormalPreservingMultiCursor),
         vscode.commands.registerCommand(toggleSelectionId, toggleSelection),
         vscode.commands.registerCommand(enableSelectionId, enableSelection),
         vscode.commands.registerCommand(cancelSelectionId, cancelSelection),
@@ -236,7 +365,90 @@ export function register(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand(typeNormalKeysId, typeNormalKeys),
         vscode.commands.registerCommand(selectBetweenId, selectBetween),
         vscode.commands.registerCommand(repeatLastChangeId, repeatLastChange),
-        vscode.commands.registerCommand(importPresetsId, importPresets)
+        vscode.commands.registerCommand(importPresetsId, importPresets),
+
+        // Cross-plugin communication API
+        vscode.commands.registerCommand("modaledit.getMode",
+            () => getCurrentMode()),
+
+        vscode.commands.registerCommand("modaledit.subscribeToModeChanges",
+            (commandName: string) => {
+                // Input validation: must be non-empty string, trimmed
+                if (typeof commandName !== 'string') {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Invalid type (${typeof commandName})`)
+                    return false
+                }
+
+                const trimmed = commandName.trim()
+                if (trimmed.length === 0) {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Empty command name`)
+                    return false
+                }
+
+                // Rate limiting: prevent DOS attacks
+                if (modeChangeSubscribers.size >= MAX_SUBSCRIBERS) {
+                    outputChannel.appendLine(`[Subscribe] REJECTED: Max subscribers reached (${MAX_SUBSCRIBERS})`)
+                    return false
+                }
+
+                // Check if already subscribed
+                if (modeChangeSubscribers.has(trimmed)) {
+                    outputChannel.appendLine(`[Subscribe] Already subscribed: ${trimmed}`)
+                    return true
+                }
+
+                modeChangeSubscribers.add(trimmed)
+                outputChannel.appendLine(`[Subscribe] Added: ${trimmed} (total: ${modeChangeSubscribers.size})`)
+                return true
+            }),
+
+        vscode.commands.registerCommand("modaledit.unsubscribeFromModeChanges",
+            (commandName: string) => {
+                const trimmed = typeof commandName === 'string' ? commandName.trim() : ''
+                const wasSubscribed = modeChangeSubscribers.delete(trimmed)
+                if (wasSubscribed) {
+                    outputChannel.appendLine(`[Unsubscribe] Removed: ${trimmed} (total: ${modeChangeSubscribers.size})`)
+                } else {
+                    outputChannel.appendLine(`[Unsubscribe] Not found: ${trimmed}`)
+                }
+                return wasSubscribed
+            }),
+
+        vscode.commands.registerCommand("modaledit.debugModeState",
+            () => {
+                const currentMode = getCurrentMode()
+                const subscribers = Array.from(modeChangeSubscribers)
+
+                const diagnostics = {
+                    currentMode,
+                    normalMode,
+                    searching,
+                    selecting,
+                    subscriberCount: modeChangeSubscribers.size,
+                    subscribers,
+                    maxSubscribers: MAX_SUBSCRIBERS,
+                    cacheInitialized: currentModeCache !== undefined
+                }
+
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.appendLine('[DIAGNOSTICS] Mode State Debug Information')
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.appendLine(`Current Mode: ${currentMode}`)
+                outputChannel.appendLine(`Mode Flags: normal=${normalMode}, searching=${searching}, selecting=${selecting}`)
+                outputChannel.appendLine(`Cache: ${currentModeCache === undefined ? 'uninitialized' : currentModeCache}`)
+                outputChannel.appendLine(`Subscribers: ${subscribers.length}/${MAX_SUBSCRIBERS}`)
+                if (subscribers.length > 0) {
+                    subscribers.forEach((sub, idx) => {
+                        outputChannel.appendLine(`  ${idx + 1}. ${sub}`)
+                    })
+                } else {
+                    outputChannel.appendLine(`  (none)`)
+                }
+                outputChannel.appendLine('='.repeat(60))
+                outputChannel.show()
+
+                return diagnostics
+            })
     )
     mainStatusBar = vscode.window.createStatusBarItem(
         vscode.StatusBarAlignment.Left)
@@ -263,6 +475,7 @@ async function onType(event: { text: string }) {
         currentKeySequence = []
     }
     updateCursorAndStatusBar(vscode.window.activeTextEditor, actions.getHelp())
+    updateContextKeys()
 }
 /**
  * Whenever text changes in an active editor, we set a flag. This flag is
@@ -331,6 +544,31 @@ export function enterInsert() {
     setNormalMode(false)
 }
 /**
+ * Cancel any in-progress multi-key sequence (keychord).
+ * Clears the keymap state and status bar display.
+ * No-op if no keychord is active.
+ */
+function cancelChord() {
+    if (actions.hasActiveKeychord()) {
+        actions.resetKeymap()
+        currentKeySequence = []
+        updateCursorAndStatusBar(vscode.window.activeTextEditor)
+        updateContextKeys()
+    }
+}
+/**
+ * Enter normal mode while preserving multiple cursors.
+ * Unlike enterNormal(), uses cancelMultipleSelections() instead of cancelSelection().
+ */
+export function enterNormalPreservingMultiCursor() {
+    actions.abortActions()
+    cancelSearch()
+    if (!typeSubscription)
+        typeSubscription = vscode.commands.registerCommand("type", onType)
+    setNormalMode(true)
+    cancelMultipleSelections()
+}
+/**
  * The rest of the state handling is delegated to subroutines that do specific
  * things. `setNormalMode` sets or resets the VS Code `modaledit.normal` context.
  * This can be used in "standard" key bindings. Then it sets the `normalMode`
@@ -343,6 +581,7 @@ async function setNormalMode(value: boolean): Promise<void> {
             value)
         normalMode = value
         updateCursorAndStatusBar(editor)
+        updateContextKeys()
     }
 }
 /**
@@ -380,7 +619,7 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
          * The info given by search command is shown only as long there are
          * no other messages to show.
          */
-        let sec = "    " + currentKeySequence.join("")
+        let sec = "    " + currentKeySequence.map(key => key === " " ? "␣" : key).join("")
         if (help)
             sec = `${sec}    ${help}`
         if (searchInfo) {
@@ -396,6 +635,26 @@ export function updateCursorAndStatusBar(editor: vscode.TextEditor | undefined,
         mainStatusBar.hide()
         secondaryStatusBar.hide()
     }
+
+    // Detect mode changes and notify subscribers
+    const newMode = getCurrentMode()
+    if (newMode !== currentModeCache) {
+        const oldMode = currentModeCache
+        currentModeCache = newMode
+        // Fire-and-forget notification (don't await to avoid blocking UI updates)
+        notifyModeChange(newMode).catch((error) => {
+            outputChannel.appendLine(`[Notification Error] Failed to notify mode change: ${error}`)
+        })
+        // Log mode transition for debugging
+        if (oldMode !== undefined) {
+            outputChannel.appendLine(`[Mode Transition] ${oldMode} → ${newMode}`)
+        } else {
+            outputChannel.appendLine(`[Mode Initialized] ${newMode}`)
+        }
+    }
+
+    // Update context keys to reflect current mode (including external selection changes like Cmd+D)
+    updateContextKeys()
 }
 /**
  * ## Selection Commands
@@ -410,6 +669,7 @@ async function cancelSelection(): Promise<void> {
         await vscode.commands.executeCommand("cancelSelection")
         selecting = false
         updateCursorAndStatusBar(vscode.window.activeTextEditor)
+        updateContextKeys()
     }
 }
 /**
@@ -445,6 +705,7 @@ async function toggleSelection(): Promise<void> {
 function enableSelection() {
     selecting = true;
     updateCursorAndStatusBar(vscode.window.activeTextEditor)
+    updateContextKeys()
 }
 /**
  * The following helper function actually determines, if a selection is active.
@@ -483,6 +744,7 @@ async function setSearching(value: boolean) {
     await vscode.commands.executeCommand("setContext",
         "modaledit.searching", value)
     updateCursorAndStatusBar(vscode.window.activeTextEditor)
+    updateContextKeys()
     if (!(value || searchReturnToNormal))
         enterInsert()
 }
@@ -842,11 +1104,21 @@ function escapeRegexp(str?: string): string {
     return ensureRegexp(str?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 }
 /**
- * It the search string is undefined we construct a regexp that never matches 
+ * It the search string is undefined we construct a regexp that never matches
  * any input.
  */
 function ensureRegexp(str?: string): string {
     return str || "^$a"
+}
+/**
+ * Helper function to build regex flags for selectBetween command.
+ * Combines case sensitivity and unicode flags appropriately.
+ */
+function buildRegexFlags(caseSensitive: boolean, unicode: boolean): string {
+    let flags = "g"
+    if (!caseSensitive) flags += "i"
+    if (unicode) flags += "u"
+    return flags
 }
 /**
  * For selecting ranges of text between two characters (inside parenthesis, for
@@ -861,95 +1133,199 @@ function selectBetween(args: SelectBetweenArgs) {
     if (typeof args !== 'object')
         throw Error(`${selectBetweenId}: Invalid args: ${JSON.stringify(args)}`)
     let doc = editor.document
+
     /**
-     * Get position of cursor and anchor. These positions might be in "reverse"
-     * order (cursor lies before anchor), so we need to sort them into `lowPos`
-     * and `highPos` variables and corresponding offset variables. These are
-     * used to determine the search range later on.
-     *
-     * Since `to` or `from` parameter might be missing, we initialize the
-     * `fromOffs` and `toOffs` variables to low and high offsets. They delimit
-     * the range to be selected at the end.
+     * When docScope is true, fall back to single-cursor mode and search the
+     * entire document. This maintains the original behavior for document-wide
+     * searches.
      */
-    let cursorPos = editor.selection.active
-    let anchorPos = editor.selection.anchor
-    let [highPos, lowPos] = cursorPos.isAfterOrEqual(anchorPos) ?
-        [cursorPos, anchorPos] : [anchorPos, cursorPos]
-    let highOffs = doc.offsetAt(highPos)
-    let lowOffs = doc.offsetAt(lowPos)
-    /**
-     * Next we determine the search range. The `startOffs` marks the starting
-     * offset and `endOffs` the end. Depending on the specified scope these
-     * variables are either set to start/end of the current line or the whole
-     * document.
-     */
-    let startPos = new vscode.Position(args.docScope ? 0 : lowPos.line, 0)
-    let endPos = doc.lineAt(args.docScope ? doc.lineCount - 1 : highPos.line)
-        .range.end
-    let startOffs = doc.offsetAt(startPos)
-    /**
-     * Convert `from` and `to` arguments to regexps, and then construct a 
-     * combined regexp that matches either of them.
-     */
-    let [open, close] = args.regex ? 
-        [ensureRegexp(args.from), ensureRegexp(args.to)] : 
-        [escapeRegexp(args.from), escapeRegexp(args.to)]
-    let fromOffs = lowOffs
-    if (args.from) {
+    if (args.docScope) {
         /**
-         * This branch searches for the `from` and `to` regexes in the range 
-         * from `startPos` to `lowPos`. It finds the last occurrence of either 
-         * delimiter, handling nesting if `nested` is true. If no match is 
-         * found, `fromOffs` defaults to `lowOffs`, so the selection start is
-         * not changed. 
+         * Get position of cursor and anchor. These positions might be in "reverse"
+         * order (cursor lies before anchor), so we need to sort them into `lowPos`
+         * and `highPos` variables and corresponding offset variables. These are
+         * used to determine the search range later on.
+         *
+         * Since `to` or `from` parameter might be missing, we initialize the
+         * `fromOffs` and `toOffs` variables to low and high offsets. They delimit
+         * the range to be selected at the end.
          */
-        let regexp = new RegExp(`(${open})|(${close})`, 
-            args.caseSensitive ? "g" : "gi")
-        let text = doc.getText(new vscode.Range(startPos, lowPos))
-        let matches = Array.from(text.matchAll(regexp))
-        for (let i = matches.length - 1, openCnt = 1; i >= 0 && openCnt > 0; 
-            --i) {
-            let match = matches[i]
-            fromOffs = startOffs + match.index +
-                (args.inclusive ? 0 : match[0].length)
-            if (match[1])
-                openCnt--
-            else if (args.nested && match[2])
-                openCnt++
+        let cursorPos = editor.selection.active
+        let anchorPos = editor.selection.anchor
+        let [highPos, lowPos] = cursorPos.isAfterOrEqual(anchorPos) ?
+            [cursorPos, anchorPos] : [anchorPos, cursorPos]
+        let highOffs = doc.offsetAt(highPos)
+        let lowOffs = doc.offsetAt(lowPos)
+        /**
+         * Next we determine the search range. The `startOffs` marks the starting
+         * offset and `endOffs` the end. With docScope, these are set to start/end
+         * of the whole document.
+         */
+        let startPos = new vscode.Position(0, 0)
+        let endPos = doc.lineAt(doc.lineCount - 1).range.end
+        let startOffs = doc.offsetAt(startPos)
+        /**
+         * Convert `from` and `to` arguments to regexps, and then construct a
+         * combined regexp that matches either of them.
+         */
+        let [open, close] = args.regex ?
+            [ensureRegexp(args.from), ensureRegexp(args.to)] :
+            [escapeRegexp(args.from), escapeRegexp(args.to)]
+        let fromOffs = lowOffs
+        if (args.from) {
+            /**
+             * This branch searches for the `from` and `to` regexes in the range
+             * from `startPos` to `lowPos`. It finds the last occurrence of either
+             * delimiter, handling nesting if `nested` is true. If no match is
+             * found, `fromOffs` defaults to `lowOffs`, so the selection start is
+             * not changed.
+             */
+            let regexp = new RegExp(`(${open})|(${close})`,
+                buildRegexFlags(args.caseSensitive, args.unicode))
+            let text = doc.getText(new vscode.Range(startPos, lowPos))
+            let matches = Array.from(text.matchAll(regexp))
+            for (let i = matches.length - 1, openCnt = 1; i >= 0 && openCnt > 0;
+                --i) {
+                let match = matches[i]
+                fromOffs = startOffs + match.index +
+                    (args.inclusive ? 0 : match[0].length)
+                if (match[1])
+                    openCnt--
+                else if (args.nested && match[2])
+                    openCnt++
+            }
         }
-    }
-    let toOffs = highOffs
-    if (args.to) {
-        /**
-         * This block finds the `to` regex (or string) in the range 
-         * `[highPos, endPos]`. If `nested` is true, it handles nested 
-         * delimiters by tracking open/close counts. The search proceeds 
-         * forward, updating `toOffs` to the end (or start, if not inclusive)
-         * of the first matching delimiter at the correct nesting level.
-         */
-        let regexp = new RegExp(`(${close})|(${open})`, 
-            args.caseSensitive ? "g" : "gi")
-        let text = doc.getText(new vscode.Range(highPos, endPos))
-        for (let match = regexp.exec(text), openCnt = 1; 
-            match && openCnt > 0;
-            match = regexp.exec(text)) {
-            toOffs = highOffs + match.index +
-                (args.inclusive ? match[0].length : 0)
-            if (match[1])
-                openCnt--
-            else if (args.nested && match[2])
-                openCnt++
+        let toOffs = highOffs
+        if (args.to) {
+            /**
+             * This block finds the `to` regex (or string) in the range
+             * `[highPos, endPos]`. If `nested` is true, it handles nested
+             * delimiters by tracking open/close counts. The search proceeds
+             * forward, updating `toOffs` to the end (or start, if not inclusive)
+             * of the first matching delimiter at the correct nesting level.
+             */
+            let regexp = new RegExp(`(${close})|(${open})`,
+                buildRegexFlags(args.caseSensitive, args.unicode))
+            let text = doc.getText(new vscode.Range(highPos, endPos))
+            for (let match = regexp.exec(text), openCnt = 1;
+                match && openCnt > 0;
+                match = regexp.exec(text)) {
+                toOffs = highOffs + match.index +
+                    (args.inclusive ? match[0].length : 0)
+                if (match[1])
+                    openCnt--
+                else if (args.nested && match[2])
+                    openCnt++
+            }
         }
+        if (cursorPos.isAfterOrEqual(anchorPos))
+            /**
+             * The last thing to do is to select the range from `fromOffs` to
+             * `toOffs`. We want to preserve the direction of the selection. If
+             * it was reserved when this command was called, we flip the variables.
+             */
+            changeSelection(editor, doc.positionAt(fromOffs), doc.positionAt(toOffs))
+        else
+            changeSelection(editor, doc.positionAt(toOffs), doc.positionAt(fromOffs))
+        return
     }
-    if (cursorPos.isAfterOrEqual(anchorPos))
+
+    /**
+     * Multi-cursor mode: process each selection independently.
+     * Each cursor searches within its own line scope.
+     */
+    editor.selections = editor.selections.map(selection => {
         /**
-         * The last thing to do is to select the range from `fromOffs` to
-         * `toOffs`. We want to preserve the direction of the selection. If
-         * it was reserved when this command was called, we flip the variables.
+         * Get position of cursor and anchor. These positions might be in "reverse"
+         * order (cursor lies before anchor), so we need to sort them into `lowPos`
+         * and `highPos` variables and corresponding offset variables. These are
+         * used to determine the search range later on.
+         *
+         * Since `to` or `from` parameter might be missing, we initialize the
+         * `fromOffs` and `toOffs` variables to low and high offsets. They delimit
+         * the range to be selected at the end.
          */
-        changeSelection(editor, doc.positionAt(fromOffs), doc.positionAt(toOffs))
-    else
-        changeSelection(editor, doc.positionAt(toOffs), doc.positionAt(fromOffs))
+        let cursorPos = selection.active
+        let anchorPos = selection.anchor
+        let [highPos, lowPos] = cursorPos.isAfterOrEqual(anchorPos) ?
+            [cursorPos, anchorPos] : [anchorPos, cursorPos]
+        let highOffs = doc.offsetAt(highPos)
+        let lowOffs = doc.offsetAt(lowPos)
+        /**
+         * Next we determine the search range. The `startOffs` marks the starting
+         * offset and `endOffs` the end. These are set to start/end of the current
+         * line(s) spanned by this selection.
+         */
+        let startPos = new vscode.Position(lowPos.line, 0)
+        let endPos = doc.lineAt(highPos.line).range.end
+        let startOffs = doc.offsetAt(startPos)
+        /**
+         * Convert `from` and `to` arguments to regexps, and then construct a
+         * combined regexp that matches either of them.
+         */
+        let [open, close] = args.regex ?
+            [ensureRegexp(args.from), ensureRegexp(args.to)] :
+            [escapeRegexp(args.from), escapeRegexp(args.to)]
+        let fromOffs = lowOffs
+        if (args.from) {
+            /**
+             * This branch searches for the `from` and `to` regexes in the range
+             * from `startPos` to `lowPos`. It finds the last occurrence of either
+             * delimiter, handling nesting if `nested` is true. If no match is
+             * found, `fromOffs` defaults to `lowOffs`, so the selection start is
+             * not changed.
+             */
+            let regexp = new RegExp(`(${open})|(${close})`,
+                buildRegexFlags(args.caseSensitive, args.unicode))
+            let text = doc.getText(new vscode.Range(startPos, lowPos))
+            let matches = Array.from(text.matchAll(regexp))
+            for (let i = matches.length - 1, openCnt = 1; i >= 0 && openCnt > 0;
+                --i) {
+                let match = matches[i]
+                fromOffs = startOffs + match.index +
+                    (args.inclusive ? 0 : match[0].length)
+                if (match[1])
+                    openCnt--
+                else if (args.nested && match[2])
+                    openCnt++
+            }
+        }
+        let toOffs = highOffs
+        if (args.to) {
+            /**
+             * This block finds the `to` regex (or string) in the range
+             * `[highPos, endPos]`. If `nested` is true, it handles nested
+             * delimiters by tracking open/close counts. The search proceeds
+             * forward, updating `toOffs` to the end (or start, if not inclusive)
+             * of the first matching delimiter at the correct nesting level.
+             */
+            let regexp = new RegExp(`(${close})|(${open})`,
+                buildRegexFlags(args.caseSensitive, args.unicode))
+            let text = doc.getText(new vscode.Range(highPos, endPos))
+            for (let match = regexp.exec(text), openCnt = 1;
+                match && openCnt > 0;
+                match = regexp.exec(text)) {
+                toOffs = highOffs + match.index +
+                    (args.inclusive ? match[0].length : 0)
+                if (match[1])
+                    openCnt--
+                else if (args.nested && match[2])
+                    openCnt++
+            }
+        }
+        /**
+         * Return a new selection for this cursor, preserving the direction.
+         */
+        if (cursorPos.isAfterOrEqual(anchorPos))
+            return new vscode.Selection(doc.positionAt(fromOffs), doc.positionAt(toOffs))
+        else
+            return new vscode.Selection(doc.positionAt(toOffs), doc.positionAt(fromOffs))
+    })
+
+    /**
+     * Reveal the primary selection to ensure it's visible.
+     */
+    editor.revealRange(editor.selection)
 }
 /**
  * ## Repeat Last Change Command

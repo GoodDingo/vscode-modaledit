@@ -102,11 +102,11 @@ let searchStatusColor: string | undefined
 let selectStatusColor: string | undefined
 /**
  * Another thing you can set in config, is whether ModalEdit starts in normal
- * mode. 
+ * mode.
  */
 let startInNormalMode: boolean
 /**
- * The root of the action configuration is keymap. This defines what key 
+ * The root of the action configuration is keymap. This defines what key
  * sequences will be run when keys are pressed in normal mode.
  */
 let baseKeymap: Keymap
@@ -161,6 +161,10 @@ export function getSelectStyles():
 
 export function getStartInNormalMode(): boolean {
     return startInNormalMode
+}
+
+export function hasActiveKeychord(): boolean {
+    return currentKeymap !== null
 }
 /**
  * You can also set the last command from outside the module.
@@ -429,6 +433,9 @@ function evalString(str: string, __selecting: boolean): any {
     let __cmd = __keys.join('')
     let __rcmd = __rkeys.join('')
     let editor = vscode.window.activeTextEditor
+    let __multicursor = editor ? editor.selections.length > 1 : false
+    let __hasSelection = editor ? editor.selections.some(sel => !sel.isEmpty) : false
+    let __hasChord = currentKeymap !== null
     if (editor) {
         let cursor = editor.selection.active
         __file = editor.document.fileName
@@ -468,6 +475,15 @@ async function executeConditional(cond: Conditional, selecting: boolean):
 let abort = false
 export function abortActions() {
     abort = true
+}
+/**
+ * Reset the keymap state machine to clear any in-progress multi-key sequences.
+ * This is used when the user presses Escape to cancel an incomplete keychord.
+ */
+export function resetKeymap() {
+    currentKeymap = null
+    keySequence = []
+    keySeqStack = []
 }
 /**
  * Parameterized commands can get their arguments in two forms: as a string 
